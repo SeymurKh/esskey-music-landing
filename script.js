@@ -38,7 +38,7 @@ const CONFIG = {
   API_TIMEOUT: 10000,
   RSS_TIMEOUT: 12000,
   PARALLAX_FACTOR: 0.03,
-  CACHE_KEY: "essk_v14",
+  CACHE_KEY: "essk_v15",
 };
 
 /*
@@ -50,15 +50,20 @@ const STREAMS = [
     id: "RJtt_Jd9Uns", 
     title: "RADIO 24/7 | Downtempo for Coding, Work & Inner Flow", 
     url: "https://www.youtube.com/live/RJtt_Jd9Uns", 
-    thumbnail: "https://i.ytimg.com/vi/RJtt_Jd9Uns/hqdefault.jpg" 
+    thumbnail: "https://i.ytimg.com/vi/RJtt_Jd9Uns/hqdefault.jpg",
+    isLive: true
   },
   { 
     id: "Y0BSnmYRh_8", 
     title: "RADIO 24/7 | Organic House For Deep working, Art & Design Works", 
     url: "https://www.youtube.com/live/Y0BSnmYRh_8", 
-    thumbnail: "https://i.ytimg.com/vi/Y0BSnmYRh_8/hqdefault.jpg" 
+    thumbnail: "https://i.ytimg.com/vi/Y0BSnmYRh_8/hqdefault.jpg",
+    isLive: true
   },
 ];
+
+/* Set of hardcoded stream IDs for O(1) lookup during filtering */
+const STREAM_IDS = new Set(STREAMS.map(s => s.id));
 
 
 /* ─── 2. DOM References ────────────────────────────────────────────────── */
@@ -240,9 +245,38 @@ async function fetchViaYouTubeAPI() {
                      coverUrl(videoId),
           published: item.contentDetails?.videoPublishedAt || 
                      item.snippet.publishedAt || "",
+          liveBroadcastContent: item.snippet.liveBroadcastContent || "none",
         };
       })
       .filter(Boolean);
+    
+    // Fetch accurate liveBroadcastContent for each video via videos.list
+    // playlistItems doesn't always return accurate live status
+    try {
+      const videoIds = videos.map(v => v.id).join(',');
+      const detailsUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
+      detailsUrl.searchParams.set("part", "snippet");
+      detailsUrl.searchParams.set("id", videoIds);
+      detailsUrl.searchParams.set("maxResults", String(CONFIG.MAX_VIDEOS));
+      detailsUrl.searchParams.set("key", CONFIG.YOUTUBE_API_KEY);
+      
+      const detailsRes = await fetch(detailsUrl.toString());
+      if (detailsRes.ok) {
+        const detailsData = await detailsRes.json();
+        if (detailsData.items) {
+          const liveMap = new Map(
+            detailsData.items.map(v => [v.id, v.snippet?.liveBroadcastContent || "none"])
+          );
+          for (const v of videos) {
+            if (liveMap.has(v.id)) {
+              v.liveBroadcastContent = liveMap.get(v.id);
+            }
+          }
+        }
+      }
+    } catch (detailErr) {
+      console.warn("[EssKey] Could not fetch liveBroadcastContent details:", detailErr.message);
+    }
     
     console.log(`[EssKey] YouTube API: fetched ${videos.length} videos`);
     return videos;
@@ -372,10 +406,40 @@ async function fetchYouTubeVideos() {
     }
   }
   
-  // 4. Filter streams and apply limit
+  // 4. Filter out streams and sort by date (newest first), then apply limit
   if (videos?.length) {
     const totalFetched = videos.length;
-    const filtered = videos.filter((v) => !v.title.toUpperCase().startsWith("RADIO 24/7"));
+    
+    // Multi-criteria stream detection:
+    //   a) Video ID matches a hardcoded stream (STREAM_IDS Set)
+    //   b) YouTube API says it's live/upcoming (liveBroadcastContent)
+    //   c) Title matches known stream prefix patterns
+    const STREAM_TITLE_PATTERNS = ["RADIO 24/7", "24/7 RADIO", "LIVE RADIO", "24/7 STREAM"];
+    
+    const filtered = videos.filter((v) => {
+      // a) Check if video ID is in our hardcoded streams set
+      if (STREAM_IDS.has(v.id)) return false;
+      
+      // b) Check YouTube API liveBroadcastContent field
+      if (v.liveBroadcastContent === "live" || v.liveBroadcastContent === "upcoming") return false;
+      
+      // c) Check title patterns for streams
+      const upperTitle = (v.title || "").toUpperCase();
+      for (const pattern of STREAM_TITLE_PATTERNS) {
+        if (upperTitle.startsWith(pattern)) return false;
+      }
+      
+      return true;
+    });
+    
+    // Sort by published date (newest first) — ensures consistent order
+    // regardless of API/RSS source
+    filtered.sort((a, b) => {
+      const dateA = a.published ? new Date(a.published).getTime() : 0;
+      const dateB = b.published ? new Date(b.published).getTime() : 0;
+      return dateB - dateA;
+    });
+    
     const limited = CONFIG.MAX_VIDEOS ? filtered.slice(0, CONFIG.MAX_VIDEOS) : filtered;
     
     console.log(`[EssKey] Fetched ${totalFetched}, filtered ${totalFetched - filtered.length} streams, ${limited.length} videos`);
