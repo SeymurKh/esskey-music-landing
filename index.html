@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EssKeyMusic — Ambient, Lo-Fi &amp; Downtempo for Deep Focus</title>
+  <title>EssKeyMusic — Ambient, Lo-Fi & Downtempo for Deep Focus</title>
   <meta name="description" content="EssKey Music — ambient, lo-fi & downtempo for deep focus, coding, and late-night thinking. Subscribe for new releases and live sessions." />
   <meta name="theme-color" content="#070707" />
   <meta name="robots" content="index, follow" />
@@ -53,10 +53,11 @@
   <link rel="dns-prefetch" href="//www.googleapis.com" />
 
   <!-- Fonts -->
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Cormorant+Garamond:wght@500;600;700&display=swap" as="style" />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Cormorant+Garamond:wght@500;600;700&display=swap" rel="stylesheet" />
 
   <!-- Styles -->
-  <link rel="stylesheet" href="./styles.min.css" />
+  <link rel="stylesheet" href="./styles.css" />
 
   <!-- Structured Data (JSON-LD) -->
   <script type="application/ld+json">
@@ -94,7 +95,7 @@
   <noscript>
     <div style="padding:60px 24px;text-align:center;font-family:sans-serif;color:#ececec;background:#0b0b0b;min-height:100vh;">
       <h1 style="font-size:2rem;margin-bottom:12px;">EssKey Music</h1>
-      <p style="margin-bottom:20px;color:#a8a8a8;">Music &amp; Atmosphere — ambient, lo-fi &amp; downtempo for deep focus.</p>
+      <p style="margin-bottom:20px;color:#a8a8a8;">Music & Atmosphere — ambient, lo-fi & downtempo for deep focus.</p>
       <p style="margin-bottom:20px;">JavaScript is required to display videos and streams.</p>
       <a href="https://www.youtube.com/@EssKeyMusic?sub_confirmation=1" style="display:inline-block;padding:12px 24px;background:#fff;color:#111;text-decoration:none;border-radius:8px;font-weight:bold;">Subscribe on YouTube</a>
     </div>
@@ -156,7 +157,7 @@
       <div class="hero-shell">
         <div class="hero-content reveal">
           <p class="eyebrow">YouTube Channel</p>
-          <h1><span class="h1-brand">EssKey Music</span> <span class="h1-sub">— Ambient &amp; Lo-Fi</span></h1>
+          <h1><span class="h1-brand">EssKey Music</span></h1>
           <p class="lead">Music & Atmosphere</p>
           <div class="hero-actions">
             <a class="btn btn-solid" href="https://www.youtube.com/@EssKeyMusic?sub_confirmation=1" target="_blank" rel="noopener noreferrer">Subscribe</a>
@@ -186,7 +187,7 @@
       <div id="videoList" class="media-grid"></div>
     </section>
 
-    <!-- Live streams (hardcoded 24/7 radios) -->
+    <!-- Live streams (loaded via YouTube Data API v3) -->
     <section id="live" class="section section-live">
       <div class="section-head reveal">
         <p class="eyebrow">Live Sessions</p>
@@ -244,7 +245,7 @@
     </div>
   </footer>
 
-  <script src="./script.min.js"></script>
+  <script src="./script.js"></script>
 
   <!-- Service Worker Registration -->
   <script>

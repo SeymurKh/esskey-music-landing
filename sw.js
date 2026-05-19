@@ -1,13 +1,13 @@
 /* Service Worker: Enables offline functionality and cache management */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
-const CACHE_NAME = 'esskey-v2';
+const CACHE_NAME = 'esskey-v3';
 
 const CACHE_ASSETS = [
   './',
   './index.html',
-  './styles.min.css',
-  './script.min.js',
+  './styles.css',
+  './script.js',
   './manifest.json',
   './yt-channel-logo-circle.webp',
   './yt-channel-favicon-circle.webp',
@@ -35,7 +35,8 @@ self.addEventListener('fetch', (event) => {
   
   // Skip YouTube API calls - always fresh
   if (event.request.url.includes('googleapis.com') || 
-      event.request.url.includes('youtube.com')) {
+      event.request.url.includes('youtube.com') ||
+      event.request.url.includes('ytimg.com')) {
     return;
   }
   

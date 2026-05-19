@@ -3,10 +3,10 @@
    ═══════════════════════════════════════════════════════════════════════════
 
    Structure:
-     1. Config & Data Sources
+     1. Config
      2. DOM References
      3. Utility Functions
-     4. Data Fetching (YouTube API v3 + RSS Fallback)
+     4. Data Fetching (YouTube API v3 — single request)
      5. Rendering (cards, skeletons, show-more)
      6. Scroll Reveal Animation
      7. Background Video Fallback
@@ -18,52 +18,28 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 
-/* ─── 1. Config & Data Sources ─────────────────────────────────────────── */
+/* ─── 1. Config ─────────────────────────────────────────────────────────── */
 
 const CONFIG = {
   CHANNEL_ID: "UCa9kWM8BbmFi5OpXbjyqk9w",
-  
+
   // YouTube Data API v3 Key
   // ⚠️ SECURITY: Restrict this key in Google Cloud Console:
   //    - Go to: https://console.cloud.google.com/apis/credentials
   //    - Edit this key → Application restrictions: HTTP referrers
   //    - Add: https://esskey-music.vercel.app/*
   YOUTUBE_API_KEY: "AIzaSyBF1CMRH89borC-ibFL3LXX_7XofUJLEuY",
-  
-  RSS_URL: `https://www.youtube.com/feeds/videos.xml?channel_id=UCa9kWM8BbmFi5OpXbjyqk9w`,
+
   VISIBLE_VIDEO_COUNT: 6,
   MAX_VIDEOS: 50,
-  CACHE_TTL: 5 * 60 * 1000,      // 5 minutes
   PRELOADER_MAX_TIME: 8000,
-  API_TIMEOUT: 10000,
-  RSS_TIMEOUT: 12000,
   PARALLAX_FACTOR: 0.03,
-  CACHE_KEY: "essk_v15",
 };
 
-/*
- * Streams — HARDCODED data for 24/7 live radios.
- * Update manually when adding new streams.
- */
-const STREAMS = [
-  { 
-    id: "RJtt_Jd9Uns", 
-    title: "RADIO 24/7 | Downtempo for Coding, Work & Inner Flow", 
-    url: "https://www.youtube.com/live/RJtt_Jd9Uns", 
-    thumbnail: "https://i.ytimg.com/vi/RJtt_Jd9Uns/hqdefault.jpg",
-    isLive: true
-  },
-  { 
-    id: "Y0BSnmYRh_8", 
-    title: "RADIO 24/7 | Organic House For Deep working, Art & Design Works", 
-    url: "https://www.youtube.com/live/Y0BSnmYRh_8", 
-    thumbnail: "https://i.ytimg.com/vi/Y0BSnmYRh_8/hqdefault.jpg",
-    isLive: true
-  },
+/** Title patterns that identify 24/7 live streams */
+const STREAM_TITLE_PATTERNS = [
+  "RADIO 24/7", "24/7 RADIO", "LIVE RADIO", "24/7 STREAM",
 ];
-
-/* Set of hardcoded stream IDs for O(1) lookup during filtering */
-const STREAM_IDS = new Set(STREAMS.map(s => s.id));
 
 
 /* ─── 2. DOM References ────────────────────────────────────────────────── */
@@ -101,370 +77,128 @@ function isValidHttpUrl(value) {
   }
 }
 
-/** Extract 11-char YouTube video ID from various URL formats */
-function extractVideoId(url) {
-  const match = url.match(/(?:v=|youtu\.be\/|\/videos\/)([a-zA-Z0-9_-]{11})/);
-  return match ? match[1] : "";
-}
-
-/** Parse raw YouTube Atom XML into an array of video objects */
-function parseYouTubeXml(xml) {
-  if (!xml || typeof xml !== "string") {
-    throw new Error("Invalid XML data");
+/** Check if a video title matches known stream patterns */
+function isStreamByTitle(title) {
+  const upperTitle = (title || "").toUpperCase();
+  for (const pattern of STREAM_TITLE_PATTERNS) {
+    if (upperTitle.startsWith(pattern)) return true;
   }
-  
-  const doc = new DOMParser().parseFromString(xml, "text/xml");
-  
-  const parseError = doc.querySelector("parsererror");
-  if (parseError) {
-    throw new Error("XML parsing failed - invalid feed format");
-  }
-  
-  const entries = [...doc.querySelectorAll("entry")];
-  if (!entries.length) throw new Error("No entries in XML feed");
-  
-  return entries.map((e) => {
-    const id = e.querySelector("videoId")?.textContent || "";
-    if (!id) {
-      console.warn("[EssKey] Entry missing videoId, skipping");
-      return null;
-    }
-    return {
-      id,
-      title:     e.querySelector("title")?.textContent || "Untitled",
-      url:       `https://youtu.be/${id}`,
-      thumbnail: coverUrl(id),
-      published: e.querySelector("published")?.textContent || "",
-    };
-  }).filter(Boolean);
+  return false;
 }
 
 
-/* ─── 3b. Local Storage Cache ──────────────────────────────────────────── */
-
-function cacheGet(key, ttl) {
-  try {
-    const item = localStorage.getItem(key);
-    if (!item) return null;
-    
-    const parsed = JSON.parse(item);
-    if (!parsed || typeof parsed.ts !== "number" || !Array.isArray(parsed.data)) {
-      localStorage.removeItem(key);
-      return null;
-    }
-    
-    if (Date.now() - parsed.ts >= ttl) {
-      localStorage.removeItem(key);
-      return null;
-    }
-    
-    return parsed.data;
-  } catch (err) {
-    console.warn("[EssKey] Cache read failed:", err.message);
-    try {
-      localStorage.removeItem(key);
-    } catch (e) {}
-    return null;
-  }
-}
-
-function cacheSet(key, data) {
-  try {
-    if (!Array.isArray(data)) {
-      console.warn("[EssKey] Cache write failed: data must be an array");
-      return;
-    }
-    localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data }));
-  } catch (err) {
-    console.warn("[EssKey] Cache write failed:", err.message);
-    if (err.name === "QuotaExceededError") {
-      try {
-        localStorage.removeItem(key);
-        console.log("[EssKey] Cleared old cache due to quota limit");
-      } catch (e) {}
-    }
-  }
-}
-
-
-/* ─── 4. Data Fetching (YouTube API v3 + RSS Fallback) ────────────────── */
+/* ─── 4. Data Fetching (YouTube API v3 — single request) ───────────────── */
 
 /**
- * Fetch videos using YouTube Data API v3.
- * PRIMARY method - more reliable and gets up to 50 videos.
+ * Fetch all uploads using YouTube Data API v3.
+ * Single request to playlistItems — returns raw items for later separation.
  */
 async function fetchViaYouTubeAPI() {
   const uploadsPlaylistId = CONFIG.CHANNEL_ID.replace("UC", "UU");
-  
+
   const url = new URL("https://www.googleapis.com/youtube/v3/playlistItems");
   url.searchParams.set("part", "snippet,contentDetails");
   url.searchParams.set("playlistId", uploadsPlaylistId);
   url.searchParams.set("maxResults", String(CONFIG.MAX_VIDEOS));
   url.searchParams.set("key", CONFIG.YOUTUBE_API_KEY);
-  
+
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), CONFIG.API_TIMEOUT);
-  
+  const timer = setTimeout(() => ctl.abort(), 10000);
+
   try {
     const res = await fetch(url.toString(), { signal: ctl.signal });
     clearTimeout(timer);
-    
+
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
       const errorMsg = errorData.error?.message || `HTTP ${res.status}`;
-      
+
       if (res.status === 403 && errorMsg.includes("quota")) {
         throw new Error("YouTube API quota exceeded");
       }
-      
+
       throw new Error(`YouTube API error: ${errorMsg}`);
     }
-    
+
     const data = await res.json();
-    
+
     if (!data.items || !data.items.length) {
       throw new Error("No videos found in API response");
     }
-    
-    const videos = data.items
+
+    const items = data.items
       .filter(item => item.snippet?.resourceId?.videoId)
       .map(item => {
         const videoId = item.snippet.resourceId.videoId;
         const title = item.snippet.title || "Untitled";
-        
+
         if (title === "Private video" || title === "Deleted video") {
           return null;
         }
-        
+
         return {
           id: videoId,
           title: title,
           url: `https://youtu.be/${videoId}`,
-          thumbnail: item.snippet.thumbnails?.high?.url || 
-                     item.snippet.thumbnails?.medium?.url || 
+          thumbnail: item.snippet.thumbnails?.high?.url ||
+                     item.snippet.thumbnails?.medium?.url ||
                      coverUrl(videoId),
-          published: item.contentDetails?.videoPublishedAt || 
+          published: item.contentDetails?.videoPublishedAt ||
                      item.snippet.publishedAt || "",
           liveBroadcastContent: item.snippet.liveBroadcastContent || "none",
         };
       })
       .filter(Boolean);
-    
-    // Fetch accurate liveBroadcastContent for each video via videos.list
-    // playlistItems doesn't always return accurate live status
-    try {
-      const videoIds = videos.map(v => v.id).join(',');
-      const detailsUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
-      detailsUrl.searchParams.set("part", "snippet");
-      detailsUrl.searchParams.set("id", videoIds);
-      detailsUrl.searchParams.set("maxResults", String(CONFIG.MAX_VIDEOS));
-      detailsUrl.searchParams.set("key", CONFIG.YOUTUBE_API_KEY);
-      
-      const detailsRes = await fetch(detailsUrl.toString());
-      if (detailsRes.ok) {
-        const detailsData = await detailsRes.json();
-        if (detailsData.items) {
-          const liveMap = new Map(
-            detailsData.items.map(v => [v.id, v.snippet?.liveBroadcastContent || "none"])
-          );
-          for (const v of videos) {
-            if (liveMap.has(v.id)) {
-              v.liveBroadcastContent = liveMap.get(v.id);
-            }
-          }
-        }
-      }
-    } catch (detailErr) {
-      console.warn("[EssKey] Could not fetch liveBroadcastContent details:", detailErr.message);
-    }
-    
-    console.log(`[EssKey] YouTube API: fetched ${videos.length} videos`);
-    return videos;
-    
+
+    console.log(`[EssKey] YouTube API: fetched ${items.length} items`);
+    return items;
+
   } catch (err) {
     clearTimeout(timer);
     if (err.name === "AbortError") {
-      throw new Error(`YouTube API timeout after ${CONFIG.API_TIMEOUT}ms`);
+      throw new Error("YouTube API timeout after 10000ms");
     }
     throw err;
   }
 }
 
 /**
- * RSS proxy sources as FALLBACK when YouTube API fails.
- * Limited to ~15 videos by YouTube's RSS feed.
- */
-const RSS_SOURCES = [
-  {
-    name: "AllOrigins",
-    url: `https://api.allorigins.win/get?url=${encodeURIComponent(CONFIG.RSS_URL)}`,
-    async parse(json) {
-      if (!json || typeof json !== "object") {
-        throw new Error("Invalid response format");
-      }
-      if (json.status && json.status.http_code >= 400) {
-        throw new Error(`Proxy error: ${json.status.http_code}`);
-      }
-      if (!json.contents) throw new Error("No contents in response");
-      return parseYouTubeXml(json.contents);
-    },
-  },
-  {
-    name: "rss2json",
-    url: `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(CONFIG.RSS_URL)}`,
-    parse(json) {
-      if (!json || typeof json !== "object") {
-        throw new Error("Invalid response format");
-      }
-      if (json.status === "error") {
-        throw new Error(json.message || "RSS2JSON API error");
-      }
-      if (!json.items?.length) throw new Error("No items in feed");
-      return json.items.map((item) => {
-        if (!item.link) return null;
-        return {
-          id:        extractVideoId(item.link),
-          title:     item.title || "Untitled",
-          url:       item.link,
-          thumbnail: item.thumbnail || item.enclosure?.link || "",
-          published: item.pubDate || "",
-        };
-      }).filter(Boolean);
-    },
-  },
-];
-
-async function tryRSSSource(src) {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), CONFIG.RSS_TIMEOUT);
-  try {
-    const res = await fetch(src.url, { signal: ctl.signal });
-    clearTimeout(timer);
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    const videos = await src.parse(data);
-    if (!videos.length) throw new Error("Empty feed");
-    return videos;
-  } catch (err) {
-    clearTimeout(timer);
-    if (err.name === "AbortError") {
-      throw new Error(`Timeout after ${CONFIG.RSS_TIMEOUT}ms`);
-    }
-    throw err;
-  }
-}
-
-async function fetchViaRSS() {
-  const results = await Promise.all(
-    RSS_SOURCES.map((s) => tryRSSSource(s).catch((err) => {
-      console.warn(`[EssKey] RSS ${s.name} failed:`, err.message);
-      return null;
-    }))
-  );
-  
-  for (const r of results) {
-    if (r?.length) {
-      console.log(`[EssKey] RSS fallback: ${r.length} videos`);
-      return r;
-    }
-  }
-  
-  throw new Error("All RSS sources failed");
-}
-
-/**
- * Fetch latest videos. Strategy:
- *  1. Check localStorage cache
- *  2. Try YouTube Data API v3 (PRIMARY - up to 50 videos)
- *  3. Fallback to RSS proxies (LIMITED - ~15 videos)
- *  4. Filter out "RADIO 24/7" streams
- *  5. Cache the result
+ * Fetch and separate videos from streams.
+ * Strategy:
+ *  1. Try YouTube Data API v3 (single playlistItems request)
+ *  2. Separate result into { videos, streams } by liveBroadcastContent + title patterns
+ *  3. Sort each array by date (newest first)
  */
 async function fetchYouTubeVideos() {
-  // 1. Cache hit?
-  const cached = cacheGet(CONFIG.CACHE_KEY, CONFIG.CACHE_TTL);
-  if (cached?.length) {
-    console.log(`[EssKey] Using cached data (${cached.length} videos)`);
-    return cached;
+  const items = await fetchViaYouTubeAPI();
+
+  const videos = [];
+  const streams = [];
+
+  for (const item of items) {
+    const isLive = item.liveBroadcastContent === "live" || item.liveBroadcastContent === "upcoming";
+    const isStreamTitle = isStreamByTitle(item.title);
+
+    if (isLive || isStreamTitle) {
+      streams.push(item);
+    } else {
+      videos.push(item);
+    }
   }
 
-  let videos = null;
-  
-  // 2. Try YouTube API first (PRIMARY)
-  try {
-    videos = await fetchViaYouTubeAPI();
-  } catch (err) {
-    console.warn(`[EssKey] YouTube API failed:`, err.message);
-    
-    // 3. Fallback to RSS
-    try {
-      videos = await fetchViaRSS();
-    } catch (rssErr) {
-      console.warn(`[EssKey] RSS fallback failed:`, rssErr.message);
-    }
-  }
-  
-  // 4. Filter out streams and sort by date (newest first), then apply limit
-  if (videos?.length) {
-    const totalFetched = videos.length;
-    
-    // Multi-criteria stream detection:
-    //   a) Video ID matches a hardcoded stream (STREAM_IDS Set)
-    //   b) YouTube API says it's live/upcoming (liveBroadcastContent)
-    //   c) Title matches known stream prefix patterns
-    const STREAM_TITLE_PATTERNS = ["RADIO 24/7", "24/7 RADIO", "LIVE RADIO", "24/7 STREAM"];
-    
-    const filtered = videos.filter((v) => {
-      // a) Check if video ID is in our hardcoded streams set
-      if (STREAM_IDS.has(v.id)) return false;
-      
-      // b) Check YouTube API liveBroadcastContent field
-      if (v.liveBroadcastContent === "live" || v.liveBroadcastContent === "upcoming") return false;
-      
-      // c) Check title patterns for streams
-      const upperTitle = (v.title || "").toUpperCase();
-      for (const pattern of STREAM_TITLE_PATTERNS) {
-        if (upperTitle.startsWith(pattern)) return false;
-      }
-      
-      return true;
-    });
-    
-    // Sort by published date (newest first) — ensures consistent order
-    // regardless of API/RSS source
-    filtered.sort((a, b) => {
-      const dateA = a.published ? new Date(a.published).getTime() : 0;
-      const dateB = b.published ? new Date(b.published).getTime() : 0;
-      return dateB - dateA;
-    });
-    
-    const limited = CONFIG.MAX_VIDEOS ? filtered.slice(0, CONFIG.MAX_VIDEOS) : filtered;
-    
-    console.log(`[EssKey] Fetched ${totalFetched}, filtered ${totalFetched - filtered.length} streams, ${limited.length} videos`);
-    
-    if (limited.length) {
-      cacheSet(CONFIG.CACHE_KEY, limited);
-      return limited;
-    }
-  }
-  
-  // 5. Try stale cache as last resort
-  try {
-    const staleCache = localStorage.getItem(CONFIG.CACHE_KEY);
-    if (staleCache) {
-      const parsed = JSON.parse(staleCache);
-      if (parsed?.data?.length) {
-        console.warn("[EssKey] Using stale cache as fallback");
-        return parsed.data;
-      }
-    }
-  } catch (err) {
-    console.warn("[EssKey] Could not read stale cache:", err.message);
-  }
-  
-  throw new Error("Failed to fetch videos from all sources. Check your connection.");
+  // Sort by published date (newest first)
+  const sortByDate = (a, b) => {
+    const dateA = a.published ? new Date(a.published).getTime() : 0;
+    const dateB = b.published ? new Date(b.published).getTime() : 0;
+    return dateB - dateA;
+  };
+
+  videos.sort(sortByDate);
+  streams.sort(sortByDate);
+
+  console.log(`[EssKey] Separated: ${videos.length} videos, ${streams.length} streams`);
+
+  return { videos, streams };
 }
 
 
@@ -484,45 +218,42 @@ function clearSkeletons(container) {
 
 function renderErrorState(container, errorMsg) {
   container.innerHTML = "";
-  
+
   const errorWrapper = document.createElement("div");
   errorWrapper.className = "error-state";
   errorWrapper.style.cssText = "padding:40px 20px;text-align:center;";
-  
+
   const icon = document.createElement("p");
   icon.textContent = "⚠️";
   icon.style.cssText = "font-size:3rem;margin:0 0 16px;";
-  
+
   const title = document.createElement("p");
   title.className = "live-empty";
   title.textContent = "Unable to load videos";
   title.style.cssText = "margin:0 0 8px;font-size:1.1rem;";
-  
+
   const message = document.createElement("p");
   message.className = "live-empty";
   message.style.cssText = "font-size:0.85rem;margin:0 0 20px;opacity:0.7;";
-  
+
   if (errorMsg.includes("quota")) {
     message.textContent = "API quota exceeded. Please try again later.";
-  } else if (errorMsg.includes("Timeout")) {
+  } else if (errorMsg.includes("Timeout") || errorMsg.includes("timeout")) {
     message.textContent = "The request took too long. Please check your connection.";
   } else if (errorMsg.includes("Network") || errorMsg.includes("fetch")) {
     message.textContent = "Unable to reach the server. Check your internet connection.";
   } else {
     message.textContent = "Something went wrong while loading videos.";
   }
-  
+
   const retryBtn = document.createElement("button");
   retryBtn.className = "btn btn-line";
   retryBtn.textContent = "Try Again";
   retryBtn.style.cssText = "cursor:pointer;";
   retryBtn.addEventListener("click", () => {
-    try {
-      localStorage.removeItem(CONFIG.CACHE_KEY);
-    } catch (e) {}
     window.location.reload();
   });
-  
+
   errorWrapper.appendChild(icon);
   errorWrapper.appendChild(title);
   errorWrapper.appendChild(message);
@@ -532,7 +263,7 @@ function renderErrorState(container, errorMsg) {
 
 function appendFlyoutLink(flyout, { title, url }) {
   if (!isValidHttpUrl(url)) return;
-  
+
   const a = document.createElement("a");
   a.className   = "flyout-link";
   a.href        = url;
@@ -544,19 +275,19 @@ function appendFlyoutLink(flyout, { title, url }) {
 
 function appendMediaCard(container, video) {
   const { id, title, url, thumbnail } = video;
-  
+
   const safeVideoUrl = isValidHttpUrl(url) ? url : id ? `https://youtu.be/${id}` : "";
   const bgUrl = isValidHttpUrl(thumbnail) ? thumbnail : coverUrl(id);
 
   const card = document.createElement("article");
   card.className = "media-card reveal";
-  
+
   const escapedBgUrl = bgUrl.replace(/[\\"']/g, (match) => {
     const escapes = { '"': '\\"', "'": "\\'", "\\": "\\\\" };
     return escapes[match] || match;
   });
   card.style.setProperty("--bg", `url('${escapedBgUrl}')`);
-  
+
   if (safeVideoUrl) {
     card.addEventListener("click", () => window.open(safeVideoUrl, "_blank", "noopener"));
   }
@@ -624,8 +355,18 @@ function renderVideos(videos) {
 }
 
 function renderStreams(streams) {
+  clearSkeletons($liveList);
   $liveList.innerHTML = "";
   if ($liveFlyout) $liveFlyout.innerHTML = "";
+
+  if (!streams.length) {
+    const emptyMsg = document.createElement("p");
+    emptyMsg.className = "live-empty";
+    emptyMsg.textContent = "No active streams right now.";
+    $liveList.appendChild(emptyMsg);
+    return;
+  }
+
   for (const s of streams) {
     appendMediaCard($liveList, s);
     if ($liveFlyout) appendFlyoutLink($liveFlyout, s);
@@ -693,12 +434,12 @@ if ($playerPlayBtn) $playerPlayBtn.classList.add("is-visible");
 
 function bootPlayer(videoId, videoUrl) {
   if (!$playerHost) return;
-  
+
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     console.error("[EssKey] Invalid video ID:", videoId);
     return;
   }
-  
+
   if ($playerFallback && isValidHttpUrl(videoUrl)) {
     $playerFallback.href = videoUrl;
   }
@@ -746,14 +487,14 @@ if ($form && $status) {
   const $nameField = $form.querySelector("#name");
   const $emailField = $form.querySelector("#email");
   const $msgField = $form.querySelector("#message");
-  
+
   let statusTimeout = null;
 
   function showStatus(message, type = "info", duration = 5000) {
     $status.textContent = message;
     $status.className = `form-status form-status--${type}`;
     $status.style.opacity = "1";
-    
+
     if (statusTimeout) clearTimeout(statusTimeout);
     if (duration > 0) {
       statusTimeout = setTimeout(() => {
@@ -782,7 +523,7 @@ if ($form && $status) {
 
   $form.addEventListener("submit", (e) => {
     e.preventDefault();
-    
+
     const name  = $nameField.value.trim();
     const email = $emailField.value.trim();
     const msg   = $msgField.value.trim();
@@ -821,23 +562,23 @@ if ($form && $status) {
     const subj = encodeURIComponent(`EssKey Music Contact Form — ${name}`);
     const body = encodeURIComponent(`Name: ${name}\nEmail: ${email}\n\nMessage:\n${msg}`);
     const mailtoLink = `mailto:EssKey_YTB@protonmail.com?subject=${subj}&body=${body}`;
-    
+
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    
+
     try {
       window.location.href = mailtoLink;
       showStatus(
-        isMobile 
+        isMobile
           ? "Opening your email app... If nothing happens, please email us directly."
           : "Your email program should open now. If it doesn't, please copy the email address above.",
         "success",
         8000
       );
-      
+
       setTimeout(() => {
         $form.reset();
       }, 1000);
-      
+
     } catch (err) {
       console.error("[EssKey] Mailto error:", err);
       showStatus(
@@ -943,26 +684,26 @@ function initParallax() {
 
 /* ─── 12. Bootstrap (Entry Point) ──────────────────────────────────────── */
 
-// Render hardcoded streams first (no network needed)
-renderStreams(STREAMS);
-
 // Show skeleton placeholders while data loads
 renderSkeletons($videoList, CONFIG.VISIBLE_VIDEO_COUNT);
+renderSkeletons($liveList, 2);
 
 // Wait for fonts
 const fontsReady = document.fonts?.ready || Promise.resolve();
 
-// Fetch video data
+// Fetch video data — single API request, separated into videos + streams
 const dataReady = fetchYouTubeVideos()
-  .then((videos) => {
-    console.log(`[EssKey] Loaded ${videos.length} videos. Latest: "${videos[0]?.title}"`);
+  .then(({ videos, streams }) => {
+    console.log(`[EssKey] Loaded ${videos.length} videos, ${streams.length} streams. Latest: "${videos[0]?.title}"`);
     latestVideos = videos;
     renderVideos(videos);
+    renderStreams(streams);
     return videos;
   })
   .catch((err) => {
     console.error("[EssKey] Fetch failed:", err.message);
     clearSkeletons($videoList);
+    clearSkeletons($liveList);
     renderErrorState($videoList, err.message);
     return [];
   });
