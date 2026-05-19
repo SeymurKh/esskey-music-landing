@@ -31,6 +31,7 @@ const CONFIG = {
   YOUTUBE_API_KEY: "AIzaSyBF1CMRH89borC-ibFL3LXX_7XofUJLEuY",
 
   VISIBLE_VIDEO_COUNT: 6,
+  FLYOUT_VISIBLE_COUNT: 5,
   MAX_VIDEOS: 50,
   PRELOADER_MAX_TIME: 8000,
   PARALLAX_FACTOR: 0.03,
@@ -132,7 +133,17 @@ async function fetchViaYouTubeAPI() {
         const videoId = item.snippet.resourceId.videoId;
         const title = item.snippet.title || "Untitled";
 
+        // Filter out private, deleted, and restricted videos
         if (title === "Private video" || title === "Deleted video") {
+          return null;
+        }
+
+        const thumbnail = item.snippet.thumbnails?.high?.url ||
+                     item.snippet.thumbnails?.medium?.url ||
+                     coverUrl(videoId);
+
+        // Filter out videos without a valid thumbnail URL
+        if (!thumbnail || !isValidHttpUrl(thumbnail)) {
           return null;
         }
 
@@ -140,9 +151,7 @@ async function fetchViaYouTubeAPI() {
           id: videoId,
           title: title,
           url: `https://youtu.be/${videoId}`,
-          thumbnail: item.snippet.thumbnails?.high?.url ||
-                     item.snippet.thumbnails?.medium?.url ||
-                     coverUrl(videoId),
+          thumbnail: thumbnail,
           published: item.contentDetails?.videoPublishedAt ||
                      item.snippet.publishedAt || "",
           liveBroadcastContent: item.snippet.liveBroadcastContent || "none",
@@ -273,6 +282,50 @@ function appendFlyoutLink(flyout, { title, url }) {
   flyout.appendChild(a);
 }
 
+function renderFlyout(flyout, items) {
+  if (!flyout || !items.length) return;
+
+  flyout.innerHTML = "";
+
+  const visibleItems = items.slice(0, CONFIG.FLYOUT_VISIBLE_COUNT);
+  const hiddenItems = items.slice(CONFIG.FLYOUT_VISIBLE_COUNT);
+
+  for (const item of visibleItems) {
+    appendFlyoutLink(flyout, item);
+  }
+
+  if (hiddenItems.length > 0) {
+    const hiddenContainer = document.createElement("div");
+    hiddenContainer.className = "flyout-hidden";
+
+    for (const item of hiddenItems) {
+      appendFlyoutLink(hiddenContainer, item);
+    }
+
+    flyout.appendChild(hiddenContainer);
+
+    const expandBtn = document.createElement("button");
+    expandBtn.className = "flyout-expand-btn";
+    expandBtn.type = "button";
+    expandBtn.innerHTML = '<span class="flyout-expand-icon">▼</span>';
+    expandBtn.setAttribute("aria-label", "Show more videos");
+
+    let expanded = false;
+    expandBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      expanded = !expanded;
+      hiddenContainer.classList.toggle("is-flyout-expanded", expanded);
+      expandBtn.innerHTML = expanded
+        ? '<span class="flyout-expand-icon">▲</span>'
+        : '<span class="flyout-expand-icon">▼</span>';
+      expandBtn.setAttribute("aria-label", expanded ? "Show less videos" : "Show more videos");
+    });
+
+    flyout.appendChild(expandBtn);
+  }
+}
+
 function appendMediaCard(container, video) {
   const { id, title, url, thumbnail } = video;
 
@@ -319,13 +372,11 @@ function appendMediaCard(container, video) {
 function renderVideos(videos) {
   clearSkeletons($videoList);
   $videoList.innerHTML = "";
-  if ($videoFlyout) $videoFlyout.innerHTML = "";
 
   const cards = videos.map((v) => appendMediaCard($videoList, v));
 
-  if ($videoFlyout) {
-    for (const v of videos) appendFlyoutLink($videoFlyout, v);
-  }
+  // Render flyout with limited items + expand button
+  renderFlyout($videoFlyout, videos);
 
   if (cards.length <= CONFIG.VISIBLE_VIDEO_COUNT) return;
 
@@ -357,7 +408,6 @@ function renderVideos(videos) {
 function renderStreams(streams) {
   clearSkeletons($liveList);
   $liveList.innerHTML = "";
-  if ($liveFlyout) $liveFlyout.innerHTML = "";
 
   if (!streams.length) {
     const emptyMsg = document.createElement("p");
@@ -369,8 +419,10 @@ function renderStreams(streams) {
 
   for (const s of streams) {
     appendMediaCard($liveList, s);
-    if ($liveFlyout) appendFlyoutLink($liveFlyout, s);
   }
+
+  // Render flyout with limited items + expand button
+  renderFlyout($liveFlyout, streams);
 }
 
 
@@ -656,7 +708,65 @@ function runPreloader(fontsReady, dataReady) {
 }
 
 
-/* ─── 11. Parallax Background ──────────────────────────────────────────── */
+/* ─── 11. Hamburger Menu & Brand Link ─────────────────────────────────── */
+
+const $hamburger   = document.querySelector(".hamburger");
+const $mobileMenu  = document.querySelector(".mobile-menu");
+const $brandLink   = document.querySelector(".brand-link");
+
+// Brand link — smooth scroll to top
+if ($brandLink) {
+  $brandLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+}
+
+// Hamburger toggle
+function openMobileMenu() {
+  if (!$hamburger || !$mobileMenu) return;
+  $hamburger.classList.add("is-open");
+  $hamburger.setAttribute("aria-expanded", "true");
+  $mobileMenu.classList.add("is-open");
+  $mobileMenu.setAttribute("aria-hidden", "false");
+  document.body.classList.add("is-menu-open");
+}
+
+function closeMobileMenu() {
+  if (!$hamburger || !$mobileMenu) return;
+  $hamburger.classList.remove("is-open");
+  $hamburger.setAttribute("aria-expanded", "false");
+  $mobileMenu.classList.remove("is-open");
+  $mobileMenu.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("is-menu-open");
+}
+
+if ($hamburger) {
+  $hamburger.addEventListener("click", () => {
+    if ($hamburger.classList.contains("is-open")) {
+      closeMobileMenu();
+    } else {
+      openMobileMenu();
+    }
+  });
+}
+
+// Close mobile menu on link click
+if ($mobileMenu) {
+  $mobileMenu.querySelectorAll(".mobile-menu-link").forEach((link) => {
+    link.addEventListener("click", () => {
+      closeMobileMenu();
+    });
+  });
+}
+
+// Close mobile menu on Escape key
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeMobileMenu();
+});
+
+
+/* ─── 12. Parallax Background ──────────────────────────────────────────── */
 
 function initParallax() {
   if (!$pageBg || reducedMotion) return;

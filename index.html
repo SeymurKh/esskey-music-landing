@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EssKeyMusic — Ambient, Lo-Fi & Downtempo for Deep Focus</title>
+  <title>EssKey Music | Focus Sound Design</title>
   <meta name="description" content="EssKey Music — ambient, lo-fi & downtempo for deep focus, coding, and late-night thinking. Subscribe for new releases and live sessions." />
   <meta name="theme-color" content="#070707" />
   <meta name="robots" content="index, follow" />
 
   <!-- Open Graph -->
-  <meta property="og:title" content="EssKeyMusic | YouTube Channel" />
+  <meta property="og:title" content="EssKey Music | Focus Sound Design" />
   <meta property="og:description" content="Music & Atmosphere — ambient, lo-fi & downtempo for deep focus and creative work." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://esskey-music.vercel.app/" />
@@ -132,10 +132,15 @@
 
   <!-- Top navigation bar -->
   <header class="topbar">
-    <div class="brand-wrap">
+    <a href="#" class="brand-wrap brand-link" aria-label="Back to top">
       <img src="./yt-channel-logo-circle.webp" alt="EssKeyMusic logo" class="brand-mark" width="46" height="46" loading="lazy" />
       <span class="brand-name">EssKeyMusic</span>
-    </div>
+    </a>
+    <button class="hamburger" type="button" aria-label="Open menu" aria-expanded="false">
+      <span class="hamburger-line"></span>
+      <span class="hamburger-line"></span>
+      <span class="hamburger-line"></span>
+    </button>
     <nav class="nav">
       <div class="nav-item nav-videos">
         <a href="#videos">Videos</a>
@@ -149,6 +154,16 @@
     </nav>
     <a class="btn btn-droplet" href="https://www.youtube.com/@EssKeyMusic?sub_confirmation=1" target="_blank" rel="noopener noreferrer">Subscribe</a>
   </header>
+
+  <!-- Mobile menu overlay -->
+  <div class="mobile-menu" aria-hidden="true">
+    <nav class="mobile-menu-nav">
+      <a href="#videos" class="mobile-menu-link">Videos</a>
+      <a href="#live" class="mobile-menu-link">Live Streams</a>
+      <a href="#contact" class="mobile-menu-link">Contact Us</a>
+      <a href="https://www.youtube.com/@EssKeyMusic?sub_confirmation=1" target="_blank" rel="noopener noreferrer" class="mobile-menu-link mobile-menu-subscribe">Subscribe</a>
+    </nav>
+  </div>
 
   <main>
     <!-- Hero section with featured YouTube player -->

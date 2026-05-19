@@ -1,223 +1,121 @@
-# План исправлений: Latest Videos + оптимизация
+# План правок лендинга EssKey Music
 
-## Проблемы
+## Правка 1: Пустая плашка 4-го видео в Latest Videos
 
-1. **Стримы утекают в Latest Videos** — 3-е видео показывает «прямая трансляция пользователь EssKey»
-2. **Два API-запроса** — `playlistItems` + `videos.list` = двойной расход квоты + медленная загрузка
-3. **RSS-фоллбэк ненадёжен** — не содержит `liveBroadcastContent`, стримы не фильтруются
-4. **Захардкоженные STREAMS** — не нужны, стримы должны приходить из API
-5. **Надпись «Ambient & Lo-Fi»** в hero — нужно убрать
-6. **Медленная загрузка** — лишние запросы, лишний код, ненужный кэш
-7. **API-ключ в клиенте** — ограничить по HTTP-рефереру в Google Cloud Console
+**Проблема:** В секции Latest Videos 4-я карточка отображается пустой. В [`script.js`](script.js:129) фильтруются только `"Private video"` и `"Deleted video"`, но видео с отсутствующим/недоступным thumbnail или со статусом `"none"` при отсутствии реального контента проходят фильтр.
 
----
+**Решение:**
+- В [`script.js`](script.js:129) в функции `fetchViaYouTubeAPI()` усилить фильтрацию:
+  - Проверять что `thumbnail` существует и это валидный URL
+  - Проверять что `title` не пустой и не равен дефолтным значениям YouTube
+  - Добавить проверку на `liveBroadcastContent === "none"` для видео, у которых нет ни превью, ни описания
+- В функции [`appendMediaCard`](script.js:276) добавить fallback: если thumbnail не загрузился, показать заглушку с иконкой play
 
-## Архитектура решения
-
-```mermaid
-flowchart TD
-    A[script.js: один fetch] -->|playlistItems| B[YouTube Data API v3]
-    B -->|JSON со всеми видео и стримами| A
-    A -->|Разделение по liveBroadcastContent + паттерны| C{Тип контента}
-    C -->|liveBroadcastContent = none + не стрим| D[Массив videos]
-    C -->|liveBroadcastContent = live/upcoming ИЛИ паттерн стрима| E[Массив streams]
-    D -->|Рендеринг| F[Секция Latest Videos]
-    E -->|Рендеринг| G[Секция Streams]
-```
-
-### Ключевые принципы
-
-- **Один API-запрос** — только `playlistItems`, второй запрос к `videos.list` удалён
-- **Без кэша** — каждый визит = свежие данные, нет localStorage кэша
-- **Без RSS** — удалён полностью
-- **Без хардкода STREAMS** — стримы определяются из API по `liveBroadcastContent` + паттернам заголовков
-- **API-ключ в клиенте** — с ограничением по HTTP-рефереру в Google Cloud Console
+**Файлы:** `script.js`
 
 ---
 
-## Пошаговый план изменений
+## Правка 2: Клик по EssKey Music → возврат наверх
 
-### Шаг 1: Упростить `script.js`
+**Проблема:** В [`index.html`](index.html:135) `.brand-wrap` — это `<div>` без интерактивности. Клик по логотипу/названию не делает ничего.
 
-#### 1a. Удалить RSS-фоллбэк и связанный код
+**Решение:**
+- Обернуть содержимое `.brand-wrap` в `<a href="#" class="brand-link">` 
+- Добавить обработчик в `script.js`: при клике `event.preventDefault()` + `window.scrollTo({ top: 0, behavior: 'smooth' })`
+- Либо проще: сделать `.brand-wrap` ссылкой `<a href="#top">` и добавить `id="top"` к `<body>`
 
-Удалить:
-- `CONFIG.RSS_URL`, `CONFIG.RSS_TIMEOUT`, `CONFIG.API_TIMEOUT`
-- Массив `RSS_SOURCES`
-- Функции: `tryRSSSource()`, `fetchViaRSS()`, `parseYouTubeXml()`, `extractVideoId()`
-
-#### 1b. Удалить кэширование
-
-Удалить:
-- `CONFIG.CACHE_TTL`, `CONFIG.CACHE_KEY`
-- Функции: `cacheGet()`, `cacheSet()`
-- Все обращения к `cacheGet` / `cacheSet` / `localStorage` внутри `fetchYouTubeVideos()`
-- Блок stale cache в конце `fetchYouTubeVideos()`
-
-#### 1c. Удалить хардкод стримов
-
-Удалить:
-- Массив `STREAMS`
-- Множество `STREAM_IDS`
-- Вызов `renderStreams(STREAMS)` в Bootstrap
-
-#### 1d. Упростить `fetchViaYouTubeAPI()`
-
-- Удалить второй запрос к `videos.list` — он не нужен
-- Один запрос: `playlistItems` с `maxResults=50`
-- Маппинг в объекты с полем `liveBroadcastContent` из `snippet`
-
-#### 1e. Переписать `fetchYouTubeVideos()`
-
-Новая логика:
-```
-1. Вызвать fetchViaYouTubeAPI() — один запрос к playlistItems
-2. Разделить результат на два массива:
-   - streams: liveBroadcastContent === 'live' | 'upcoming' ИЛИ заголовок начинается с паттернов стримов
-   - videos: всё остальное
-3. Отсортировать оба по дате — новые первыми
-4. Вернуть { videos, streams }
-```
-
-Паттерны стримов для заголовков:
-```js
-const STREAM_TITLE_PATTERNS = [
-  "RADIO 24/7", "24/7 RADIO", "LIVE RADIO", "24/7 STREAM"
-];
-```
-
-#### 1f. Обновить Bootstrap
-
-```js
-// Было:
-renderStreams(STREAMS);
-renderSkeletons($videoList, CONFIG.VISIBLE_VIDEO_COUNT);
-
-// Стало:
-renderSkeletons($videoList, CONFIG.VISIBLE_VIDEO_COUNT);
-renderSkeletons($liveList, 2);
-
-const dataReady = fetchYouTubeVideos()
-  .then(({ videos, streams }) => {
-    renderVideos(videos);
-    renderStreams(streams);
-    latestVideos = videos;
-    return videos;
-  })
-  .catch((err) => {
-    clearSkeletons($videoList);
-    clearSkeletons($liveList);
-    renderErrorState($videoList, err.message);
-    return [];
-  });
-```
-
-#### 1g. Обновить CONFIG
-
-Итоговый CONFIG:
-```js
-const CONFIG = {
-  CHANNEL_ID: "UCa9kWM8BbmFi5OpXbjyqk9w",
-  YOUTUBE_API_KEY: "AIzaSyBF1CMRH89borC-ibFL3LXX_7XofUJLEuY",
-  VISIBLE_VIDEO_COUNT: 6,
-  MAX_VIDEOS: 50,
-  PRELOADER_MAX_TIME: 8000,
-  PARALLAX_FACTOR: 0.03,
-};
-```
-
-#### 1h. Обновить `renderStreams()`
-
-- Принимает массив стримов из API
-- Рендерит карточки в `$liveList`
-- Рендерит ссылки в `$liveFlyout`
-- Если стримов нет — показать сообщение «No active streams right now»
-
-### Шаг 2: Обновить `index.html`
-
-- Убрать «Ambient & Lo-Fi» из hero заголовка
-- Переключить `styles.min.css` → `styles.css` и `script.min.js` → `script.js`
-- Добавить `<link rel="preload">` для шрифтов Google Fonts
-
-Было:
-```html
-<h1><span class="h1-brand">EssKey Music</span> <span class="h1-sub">— Ambient & Lo-Fi</span></h1>
-```
-
-Стало:
-```html
-<h1><span class="h1-brand">EssKey Music</span></h1>
-```
-
-### Шаг 3: Обновить `sw.js`
-
-- Обновить `CACHE_NAME` на `esskey-v3`
-- Убрать кэширование API-ответов — уже исключено через проверку на `googleapis.com`
-
-### Шаг 4: Создать `vercel.json`
-
-Заголовки кэширования для статики:
-```json
-{
-  "headers": [
-    {
-      "source": "/(.*)\\.(css|js|webp|jpg)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }]
-    }
-  ]
-}
-```
-
-### Шаг 5: Создать `.env.example`
-
-Для документации — чтобы разработчики знали, какие переменные нужны:
-```
-# YouTube Data API v3 Key
-# Ограничить в Google Cloud Console по HTTP-рефереру:
-# https://esskey-music.vercel.app/*
-YOUTUBE_API_KEY=your_key_here
-```
+**Файлы:** `index.html`, `script.js`
 
 ---
 
-## Структура файлов после изменений
+## Правка 3: Flyout Videos — только 5 видео + стрелка развёртки
 
-```
-landing/
-├── index.html             ← ИЗМЕНЁН: убран Ambient & Lo-Fi, ссылки на CSS/JS, preload шрифтов
-├── script.js              ← ИЗМЕНЁН: удалён RSS, кэш, хардкод STREAMS, второй API-запрос; новый fetchYouTubeVideos с разделением
-├── styles.css             ← БЕЗ ИЗМЕНЕНИЙ
-├── sw.js                  ← ИЗМЕНЁН: обновлён CACHE_NAME
-├── vercel.json            ← НОВЫЙ: заголовки кэширования статики
-├── .env.example           ← НОВЫЙ: шаблон для документации
-├── manifest.json          ← БЕЗ ИЗМЕНЕНИЙ
-└── plans/
-    └── plan.md            ← Этот файл
-```
+**Проблема:** В [`script.js`](script.js:327) `appendFlyoutLink` добавляет ВСЕ видео в flyout без ограничений.
 
----
+**Решение:**
+- Добавить константу `FLYOUT_VISIBLE_COUNT = 5` в CONFIG
+- В функции [`renderVideos`](script.js:319) при заполнении `$videoFlyout`:
+  - Первые 5 ссылок показывать сразу
+  - Остальные обернуть в контейнер `.flyout-hidden` с `display: none`
+  - Внизу flyout добавить кнопку-стрелку `.flyout-expand-btn` с иконкой ▼
+  - При клике на стрелку: показать скрытые ссылки, сменить иконку на ▲, при повторном клике — скрыть
+- Аналогично для [`renderStreams`](script.js:357) и `$liveFlyout`
+- Стили в `styles.css` для `.flyout-hidden`, `.flyout-expand-btn`
 
-## Безопасность API-ключа
-
-На статическом сайте невозможно полностью скрыть API-ключ. Митигация:
-
-1. **Ограничение по HTTP-рефереру** в Google Cloud Console:
-   - Go to: https://console.cloud.google.com/apis/credentials
-   - Edit key → Application restrictions: HTTP referrers
-   - Add: `https://esskey-music.vercel.app/*`
-   - Это запретит использование ключа с других доменов
-
-2. **Квота YouTube API** — по умолчанию 10 000 единиц/день. Один запрос `playlistItems` = 1 единица. Даже при 1000 посетителей/день = 1000 единиц — далеко от лимита.
+**Файлы:** `script.js`, `styles.css`
 
 ---
 
-## Порядок реализации
+## Правка 4: Заменить title
 
-1. Обновить `script.js` — удалить RSS, кэш, хардкод STREAMS, второй API-запрос; переписать fetchYouTubeVideos с разделением videos/streams
-2. Обновить `index.html` — убрать Ambient & Lo-Fi, переключить ссылки, добавить preload
-3. Обновить `sw.js` — обновить CACHE_NAME
-4. Создать `vercel.json` — заголовки кэширования
-5. Создать `.env.example` — для документации
-6. Протестировать локально
-7. Задеплоить и проверить на продакшене
-8. Ограничить API-ключ в Google Cloud Console по HTTP-рефереру
+**Проблема:** В [`index.html`](index.html:6) текущий title: `"EssKeyMusic — Ambient, Lo-Fi & Downtempo for Deep Focus"`
+
+**Решение:**
+- Заменить на `"EssKey Music | Focus Sound Design"`
+- Также обновить OG title в [`index.html`](index.html:12): `"EssKey Music | Focus Sound Design"`
+
+**Файлы:** `index.html`
+
+---
+
+## Правка 5: Мобильная версия Latest Videos
+
+**Проблема:** На экранах ≤640px [`styles.css`](styles.css:817) устанавливает `grid-template-columns: 1fr` — одна колонка, карточки на весь экран. Это не удобно — слишком крупные карточки, много скролла.
+
+**Решение:**
+- На мобильных (≤640px) сделать 2 колонки: `grid-template-columns: repeat(2, 1fr)`
+- Уменьшить gap: `gap: 8px`
+- Уменьшить шрифт заголовка в карточках
+- Скрыть кнопку Watch в карточках на мобильных — клик по всей карточке уже открывает видео
+- Уменьшить padding в `.media-card-body`
+- Как альтернатива: горизонтальный скролл с snap-точками — но 2 колонки проще и привычнее
+
+**Файлы:** `styles.css`
+
+---
+
+## Правка 6: Мобильная версия Live Streams
+
+**Проблема:** Та же что и в правке 5 — `.media-grid` используется для обоих секций.
+
+**Решение:**
+- Те же стили применятся автоматически, т.к. оба раздела используют класс `.media-grid`
+- Дополнительных изменений не требуется — правка 5 покроет оба раздела
+
+**Файлы:** `styles.css` (уже покрыто правкой 5)
+
+---
+
+## Правка 7: Hamburger-меню на мобильных
+
+**Проблема:** На экранах ≤920px [`styles.css`](styles.css:739) полностью скрывает `.nav { display: none }`. Пользователь на мобильном не может перейти к видео или трансляциям из меню.
+
+**Решение:**
+- Добавить hamburger-кнопку в topbar:
+  - В [`index.html`](index.html:134) добавить `<button class="hamburger" aria-label="Menu">` внутри `.topbar` после `.brand-wrap`
+  - Иконка: три полоски, при открытии трансформируется в крестик
+- Добавить overlay-меню:
+  - В [`index.html`](index.html:134) добавить `<div class="mobile-menu">` с ссылками: Videos, Live, Contact Us, Subscribe
+  - Меню может содержать те же flyout-списки что и десктопная навигация
+- В `styles.css`:
+  - `.hamburger { display: none }` по умолчанию
+  - На `@media (max-width: 920px)`: показать hamburger, скрыть `.nav`
+  - `.mobile-menu` — полноэкранный overlay с `backdrop-filter: blur`
+  - Полупрозрачный тёмный фон, анимация появления сверху или сбоку
+  - Ссылки стилизовать крупными кнопками для удобного тапа
+- В `script.js`:
+  - Обработчик клика на `.hamburger` — toggle класса `.is-open` на `.mobile-menu` и `.hamburger`
+  - Закрытие при клике на ссылку или вне меню
+  - Блокировка скролла body при открытом меню (`body.is-menu-open { overflow: hidden }`)
+
+**Файлы:** `index.html`, `styles.css`, `script.js`
+
+---
+
+## Сводка изменений по файлам
+
+| Файл | Правки |
+|------|--------|
+| `index.html` | #2 (brand-link), #4 (title), #7 (hamburger + mobile-menu) |
+| `script.js` | #1 (фильтрация), #2 (scroll handler), #3 (flyout expand), #7 (hamburger toggle) |
+| `styles.css` | #3 (flyout styles), #5/#6 (mobile grid), #7 (hamburger + mobile-menu) |
