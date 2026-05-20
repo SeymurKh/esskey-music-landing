@@ -44,12 +44,12 @@ const STREAM_TITLE_PATTERNS = [
 
 /** Title patterns that identify auto-generated/abandoned live streams */
 const AUTO_GENERATED_PATTERNS = [
-  "Прямой эфир пользователя",  // RU: "Live stream by"
-  "Live stream by",            // EN
-  "Livestream von",            // DE
-  "Directo de",                // ES
-  "Diffusion en direct de",    // FR
-  "Transmissão ao vivo de",    // PT
+  "Прямая трансляция пользователя",  // RU: "Live stream by"
+  "Live stream by",                  // EN
+  "Livestream von",                  // DE
+  "Directo de",                      // ES
+  "Diffusion en direct de",          // FR
+  "Transmissão ao vivo de",          // PT
 ];
 
 /** Check if a video title matches auto-generated stream patterns */

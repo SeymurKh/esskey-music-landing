@@ -1025,6 +1025,16 @@ body.is-menu-open {
     display: none;
   }
 
+  /* Hide Show more/less button on mobile — horizontal scroll shows all */
+  .section-videos .show-more-btn {
+    display: none;
+  }
+
+  /* Show all video cards on mobile — no hidden cards, scroll reveals them */
+  .section-videos .media-card.is-hidden-card {
+    display: block;
+  }
+
   .brand-mark {
     width: 36px;
     height: 36px;
